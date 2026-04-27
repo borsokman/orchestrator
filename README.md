@@ -121,3 +121,25 @@ play-with-containers
       └─ entrypoint.sh
 
 ```
+
+# 1. Log in to Docker Hub (it will ask for your password)
+
+docker login
+
+# 2. Build and tag all 6 images
+
+docker build -t borsok/inventory-db:v1 ./srcs/inventory-db
+docker build -t borsok/billing-db:v1 ./srcs/billing-db
+docker build -t borsok/rabbitmq-server:v1 ./srcs/rabbitmq-server
+docker build -t borsok/inventory-app:v1 ./srcs/inventory-app
+docker build -t borsok/billing-app:v1 ./srcs/billing-app
+docker build -t borsok/api-gateway-app:v1 ./srcs/api-gateway-app
+
+# 3. Push them to your public Docker Hub repository
+
+docker push borsok/inventory-db:v1
+docker push borsok/billing-db:v1
+docker push borsok/rabbitmq-server:v1
+docker push borsok/inventory-app:v1
+docker push borsok/billing-app:v1
+docker push borsok/api-gateway-app:v1
