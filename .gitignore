@@ -3,3 +3,5 @@
 .vagrant/
 .venv
 __pycache__/
+k3s.yaml
+node-token

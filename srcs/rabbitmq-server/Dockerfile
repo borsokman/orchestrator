@@ -7,9 +7,7 @@ RUN rabbitmq-plugins enable rabbitmq_management
 COPY entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# The AMQP Port
-EXPOSE 5672 
-# The Management Dashboard
+EXPOSE 5672
 EXPOSE 15672
 
 CMD ["/usr/local/bin/entrypoint.sh"]

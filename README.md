@@ -1,90 +1,104 @@
 ### orchestrator
 
-This project provisions a microservices architecture using Docker and Docker Compose. It migrates a multi-tier application into isolated Linux containers running PostgreSQL, RabbitMQ, and Python Flask/Pika services.
+This project provisions a microservices architecture using Kubernetes (K3s) and Vagrant. It migrates a multi-tier application into isolated Pods running PostgreSQL, RabbitMQ, and Python/Pika services.
 
 ## Architecture Overview
 
-- **inventory-db**: PostgreSQL database for the inventory service.
-- **billing-db**: PostgreSQL database for the billing service.
-- **rabbitmq-server**: Message broker for asynchronous order processing.
-- **inventory-app**: REST API managing movies (Internal Port 8080).
-- **billing-app**: Message consumer processing orders and writing to the database (Internal Port 8080).
-- **api-gateway-app**: Reverse proxy routing requests to appropriate services (Exposed Port 3000).
+It implements a scalable microservices architecture on a 2-node Kubernetes (K3s) cluster provisioned via Vagrant. The system is designed for high availability, asynchronous processing, and persistent data storage.
 
-_All containers are built from scratch using `debian:bullseye` as the base image. No pre-built service images are used._
+# Infrastructure (K3s Cluster)
+
+- **Master Node:** Runs the Kubernetes control plane and API server (`192.168.56.10`). Traefik ingress is disabled to rely on native Service LoadBalancers.
+- **Agent Node:** Worker node (`192.168.56.11`) where workloads are scheduled.
+- **Networking:** Flannel CNI is explicitly bound to the private host-only network to ensure reliable cross-node pod communication.
+
+# Application Components
+
+- **API Gateway (`api-gateway-app`):**
+  - The single entry point exposed to the host machine via a `LoadBalancer` service on port 3000.
+  - Deployed as a `Deployment` with a Horizontal Pod Autoscaler (HPA) configured to scale up to 3 replicas when CPU exceeds 60%.
+  - Routes synchronous requests to the Inventory Service and publishes asynchronous events to RabbitMQ.
+- **Inventory Service (`inventory-app`):**
+  - Handles synchronous REST API calls (CRUD operations for movies).
+  - Deployed as a `Deployment` with HPA (scales up to 3 replicas at 60% CPU).
+- **Billing Service (`billing-app`):**
+  - An asynchronous background worker that consumes order messages from RabbitMQ.
+  - Deployed as a `StatefulSet` to guarantee strict, ordered processing and stable network identity.
+
+# Data & Messaging Layer
+
+- **PostgreSQL Databases (`inventory-db` & `billing-db`):**
+  - Isolated database instances for each service (Database-per-Service pattern).
+  - Deployed as `StatefulSets` with `PersistentVolumeClaims` (PVCs).
+  - Uses the K3s default `local-path` provisioner to ensure data survives pod restarts.
+- **RabbitMQ (`rabbitmq-server`):**
+  - Message broker deployed to decouple the API Gateway from the Billing Service.
+  - Facilitates reliable, asynchronous inter-service communication.
 
 ## Prerequisites
 
-- Linux Operating System (Virtual Machine or Bare Metal)
-- Docker Engine
-- Docker Compose (V2)
-
-Configuration
-Before building the infrastructure, you must create a .env file in the root directory. This file is ignored by Git to prevent credential leaks.
-
-Create .env with the following variables:
-
-# Inventory Database
-
-INVENTORY_DB_NAME=movies_db
-INVENTORY_DB_USER=movies_user
-INVENTORY_DB_PASSWORD=your_secure_password
-INVENTORY_DB_HOST=inventory-db
-INVENTORY_DB_PORT=5432
-
-# Billing Database
-
-BILLING_DB_NAME=billing_db
-BILLING_DB_USER=orders_user
-BILLING_DB_PASSWORD=your_secure_password
-BILLING_DB_HOST=billing-db
-BILLING_DB_PORT=5432
-
-# RabbitMQ Server
-
-RABBITMQ_HOST=rabbitmq-server
-RABBITMQ_PORT=5672
-RABBITMQ_USER=billing_user
-RABBITMQ_PASSWORD=your_secure_password
-
-# API Gateway Routing
-
-INVENTORY_URL=http://inventory-app:8080
+- Vagrant
+- VirtualBox
+- kubectl CLI tool
 
 ## Infrastructure Setup & Management
 
-The entire infrastructure is managed exclusively via Docker Compose.
+The entire infrastructure is managed via Vagrant and Kubernetes.
 
-To build and start the infrastructure:
+## To build and start the infrastructure:
 
-docker compose up -d --build
+# Build the Master and Agent VMs and Kubernetes cluster
 
-To stop and remove the containers:
+chmod +x orchestrator.sh
+./orchestrator.sh start
 
-docker compose down
+# Before the kubectl test commands everytime on a new terminal
 
-To view logs for a specific service:
+export KUBECONFIG=$PWD/k3s.yaml
 
-docker compose logs api-gateway-app
+# Test the cluster
+
+kubectl get nodes
+
+# Verify the HPA (Autoscaling 1%/60%)
+
+kubectl get hpa
 
 ## API Testing with Postman
 
-A Postman Collection (Gateway_API_Tests.postman_collection.json) is included in the repository to automate the audit tests.
-
+A Postman Collection is included in the repository to automate the audit tests:
 Open Postman and click Import.
-Select the Gateway_API_Tests.postman_collection.json file.
+Select the orchestrator_API_tests.json file.
 In the imported collection, go to the Variables tab.
-Ensure base_url is set to http://localhost:3000 (or your VM's IP if testing remotely).
+Ensure base_url is set to http://192.168.56.10:3000 (or your VM's IP if testing remotely).
 Run the requests to verify Inventory CRUD operations and the asynchronous Billing Queue.
+
+## Autoscalling test
+
+Step 1: Open a terminal and watch the autoscaler live: kubectl get hpa -w
+
+Step 2: Open a second terminal and watch the pods: kubectl get pods -w
+
+Step 3: Open a third terminal and generate massive load Run this infinite loop to spam the API with hundreds of requests per second: while true; do curl -s http://192.168.56.10:3000/api/movies > /dev/null; done
 
 ## Project Tree
 
 ```
-play-with-containers
+orchestrator
+├─ Manifests
+│  ├─ api-gateway-app.yaml
+│  ├─ billing-app.yaml
+│  ├─ billing-db.yaml
+│  ├─ inventory-app.yaml
+│  ├─ inventory-db.yaml
+│  ├─ rabbitmq-server.yaml
+│  └─ secrets.yaml
 ├─ README.md
+├─ Vagrantfile
+├─ architecture.png
 ├─ docker-compose.yml
-├─ play-with-containers API tests.json
-├─ play-with-containers-py.png
+├─ orchestrator.sh
+├─ orchestrator_API_tests.json
 └─ srcs
    ├─ api-gateway-app
    │  ├─ Dockerfile
@@ -121,25 +135,3 @@ play-with-containers
       └─ entrypoint.sh
 
 ```
-
-# 1. Log in to Docker Hub (it will ask for your password)
-
-docker login
-
-# 2. Build and tag all 6 images
-
-docker build -t borsok/inventory-db:v1 ./srcs/inventory-db
-docker build -t borsok/billing-db:v1 ./srcs/billing-db
-docker build -t borsok/rabbitmq-server:v1 ./srcs/rabbitmq-server
-docker build -t borsok/inventory-app:v1 ./srcs/inventory-app
-docker build -t borsok/billing-app:v1 ./srcs/billing-app
-docker build -t borsok/api-gateway-app:v1 ./srcs/api-gateway-app
-
-# 3. Push them to your public Docker Hub repository
-
-docker push borsok/inventory-db:v1
-docker push borsok/billing-db:v1
-docker push borsok/rabbitmq-server:v1
-docker push borsok/inventory-app:v1
-docker push borsok/billing-app:v1
-docker push borsok/api-gateway-app:v1
